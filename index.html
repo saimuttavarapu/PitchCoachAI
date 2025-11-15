@@ -137,6 +137,29 @@
       if (!resp.ok) throw new Error('Upload failed: ' + resp.statusText);
       const data = await resp.json();
       showAnalytics(data);
+      // --- AUTOMATIC AI SUMMARY FETCH ---
+  const contentId = data.contentId; // returned by backend
+  if (contentId) {
+    // wait 60 seconds before calling summary
+    setTimeout(async () => {
+      try {
+        const backend = backendUrlInput.value.trim();
+        const summaryResp = await fetch(backend.replace(/\/$/, '') + '/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content_id: contentId,
+            viewer_id: 'IGH141585754362',
+            organisation_id: 'PDX436422222699'
+          })
+        });
+
+        if (!summaryResp.ok) throw new Error(summaryResp.statusText);
+        const summaryData = await summaryResp.json();
+        console.log('📝 AI Summary:', summaryData);
+
+        // display analytics if you want
+        showAnalytics(summaryData);
     } catch (err) {
       alert('Upload/processing error: ' + err.message);
       console.error(err);
