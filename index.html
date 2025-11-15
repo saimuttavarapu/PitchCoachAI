@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Video Recorder + Analytics</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 12px; background:#0f172a; color:#e6eef8; }
+    .container { max-width:900px; margin: 0 auto; }
+    video { background: #000; width:100%; max-height:480px; border-radius:8px; }
+    .controls { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
+    button { padding:10px 14px; border-radius:8px; border: none; cursor:pointer; background:#2563eb; color:white; }
+    button.danger { background:#ef4444; }
+    .analytics { margin-top:12px; background:#071031; padding:10px; border-radius:8px; display:flex; gap:10px; flex-wrap:wrap; }
+    .a-card { padding:8px; border-radius:6px; background:#0b1220; min-width:160px; }
+    .thumbs { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    img.thumb { width:120px; height:80px; object-fit:cover; border-radius:6px; }
+    .notice { color:#9aa6c7; font-size:14px; margin-top:8px; }
+    input[type=text] { padding:8px; border-radius:8px; border:1px solid #1f2937; background:#071031; color:#dfe9ff; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Recorder → Upload → Analytics</h1>
+
+    <label>Backend URL (Render):&nbsp;
+      <input id="backendUrl" type="text" placeholder="https://your-backend.onrender.com" style="width:60%" />
+    </label>
+
+    <div style="margin-top:8px;">
+      <video id="preview" autoplay muted playsinline></video>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn">Start Camera</button>
+      <button id="recordBtn">Start Recording</button>
+      <button id="stopBtn" class="danger" disabled>Stop & Upload</button>
+      <button id="downloadBtn" disabled>Download Last Clip</button>
+    </div>
+
+    <div class="notice">
+      Tip: Set the backend URL first. Frontend will POST the video blob to <code>/upload</code>.
+    </div>
+
+    <div class="analytics" id="analytics" style="display:none;">
+      <div class="a-card">
+        <strong>File name</strong><div id="a-fname"></div>
+      </div>
+      <div class="a-card">
+        <strong>Duration</strong><div id="a-duration"></div>
+      </div>
+      <div class="a-card">
+        <strong>Resolution</strong><div id="a-res"></div>
+      </div>
+      <div class="a-card">
+        <strong>Frame rate</strong><div id="a-fps"></div>
+      </div>
+      <div class="a-card">
+        <strong>Size (bytes)</strong><div id="a-size"></div>
+      </div>
+      <div class="a-card">
+        <strong>Thumbnails</strong>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  const preview = document.getElementById('preview');
+  const startBtn = document.getElementById('startBtn');
+  const recordBtn = document.getElementById('recordBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const backendUrlInput = document.getElementById('backendUrl');
+
+  let mediaStream = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let lastBlob = null;
+  let lastFileName = '';
+
+  startBtn.onclick = async () => {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      preview.srcObject = mediaStream;
+      startBtn.disabled = true;
+      recordBtn.disabled = false;
+    } catch (err) {
+      alert('Camera access denied or not available: ' + err.message);
+    }
+  };
+
+  recordBtn.onclick = () => {
+    if (!mediaStream) return alert('Start camera first.');
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'video/webm;codecs=vp8,opus' });
+    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      lastBlob = new Blob(recordedChunks, { type: 'video/webm' });
+      downloadBtn.disabled = false;
+      stopBtn.disabled = false;
+      // you can preview the recorded blob in the same video element if you want:
+      // preview.srcObject = null; preview.src = URL.createObjectURL(lastBlob);
+      lastFileName = `clip_${Date.now()}.webm`;
+    };
+    mediaRecorder.start();
+    recordBtn.disabled = true;
+    stopBtn.disabled = false;
+  };
+
+  stopBtn.onclick = async () => {
+    if (!mediaRecorder) return;
+    mediaRecorder.stop();
+    recordBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    if (!lastBlob) {
+      // Wait small amount for onstop to fire
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (!lastBlob) return alert('No recording captured.');
+
+    const backend = backendUrlInput.value.trim();
+    if (!backend) return alert('Please set Backend URL (Render service) first.');
+
+    const uploadUrl = backend.replace(/\/$/, '') + '/upload';
+    const form = new FormData();
+    form.append('video', lastBlob, lastFileName);
+
+    // indicate uploading
+    stopBtn.textContent = 'Uploading...';
+    stopBtn.disabled = true;
+
+    try {
+      const resp = await fetch(uploadUrl, { method: 'POST', body: form });
+      if (!resp.ok) throw new Error('Upload failed: ' + resp.statusText);
+      const data = await resp.json();
+      showAnalytics(data);
+    } catch (err) {
+      alert('Upload/processing error: ' + err.message);
+      console.error(err);
+    } finally {
+      stopBtn.textContent = 'Stop & Upload';
+      stopBtn.disabled = false;
+    }
+  };
+
+  downloadBtn.onclick = () => {
+    if (!lastBlob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(lastBlob);
+    a.download = lastFileName || 'recording.webm';
+    a.click();
+  };
+
+  function showAnalytics(json) {
+    document.getElementById('analytics').style.display = 'flex';
+    document.getElementById('a-fname').textContent = json.filename || '';
+    document.getElementById('a-duration').textContent = (json.format && json.format.duration) ? (Number(json.format.duration).toFixed(2) + 's') : 'n/a';
+    document.getElementById('a-res').textContent = (json.streams && json.streams[0]) ? `${json.streams[0].width}x${json.streams[0].height}` : 'n/a';
+    document.getElementById('a-fps').textContent = (json.streams && json.streams[0] && json.streams[0].r_frame_rate) ? json.streams[0].r_frame_rate : 'n/a';
+    document.getElementById('a-size').textContent = json.size || 'n/a';
+
+    const thumbsDiv = document.getElementById('thumbs');
+    thumbsDiv.innerHTML = '';
+    if (json.thumbnails && json.thumbnails.length) {
+      json.thumbnails.forEach(t => {
+        const img = document.createElement('img');
+        img.src = backendUrlInput.value.replace(/\/$/, '') + '/' + t.replace(/^\//, '');
+        img.className = 'thumb';
+        thumbsDiv.appendChild(img);
+      });
+    }
+  }
+
+})();
+</script>
+</body>
+</html>
