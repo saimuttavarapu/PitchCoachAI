@@ -43,6 +43,12 @@
     </div>
 
     <div class="analytics" id="analytics" style="display:none;">
+
+      <div class="a-card">
+        <strong>AI Summary</strong>
+          <div id="a-summary" style="white-space: pre-wrap;"></div>
+      </div>
+
       <div class="a-card">
         <strong>File name</strong><div id="a-fname"></div>
       </div>
@@ -208,6 +214,13 @@
     document.getElementById('a-res').textContent = json.streams?.[0] ? `${json.streams[0].width}x${json.streams[0].height}` : 'n/a';
     document.getElementById('a-fps').textContent = json.streams?.[0]?.r_frame_rate || 'n/a';
     document.getElementById('a-size').textContent = json.size || 'n/a';
+
+    const summaryDiv = document.getElementById('a-summary');
+      if(json.summaryText){
+        summaryDiv.textContent = json.summaryText; // shows multi-line summary
+        } else {
+          summaryDiv.textContent = 'No AI summary yet.';
+          }
 
     const thumbsDiv = document.getElementById('thumbs');
     thumbsDiv.innerHTML = '';
