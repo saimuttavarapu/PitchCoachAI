@@ -64,7 +64,6 @@
       </div>
     </div>
   </div>
-
 <script>
 (async function(){
   const preview = document.getElementById('preview');
@@ -79,29 +78,27 @@
   let recordedChunks = [];
   let lastBlob = null;
   let lastFileName = '';
+  let pollInterval = null;
 
   startBtn.onclick = async () => {
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      mediaStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
       preview.srcObject = mediaStream;
       startBtn.disabled = true;
       recordBtn.disabled = false;
-    } catch (err) {
+    } catch(err) {
       alert('Camera access denied or not available: ' + err.message);
     }
   };
 
   recordBtn.onclick = () => {
-    if (!mediaStream) return alert('Start camera first.');
+    if(!mediaStream) return alert('Start camera first.');
     recordedChunks = [];
-    mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'video/webm;codecs=vp8,opus' });
-    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType:'video/webm;codecs=vp8,opus' });
+    mediaRecorder.ondataavailable = e => { if(e.data && e.data.size) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => {
-      lastBlob = new Blob(recordedChunks, { type: 'video/webm' });
+      lastBlob = new Blob(recordedChunks, { type:'video/webm' });
       downloadBtn.disabled = false;
-      stopBtn.disabled = false;
-      // you can preview the recorded blob in the same video element if you want:
-      // preview.srcObject = null; preview.src = URL.createObjectURL(lastBlob);
       lastFileName = `clip_${Date.now()}.webm`;
     };
     mediaRecorder.start();
@@ -110,57 +107,39 @@
   };
 
   stopBtn.onclick = async () => {
-    if (!mediaRecorder) return;
+    if(!mediaRecorder) return;
     mediaRecorder.stop();
     recordBtn.disabled = false;
     stopBtn.disabled = true;
 
-    if (!lastBlob) {
-      // Wait small amount for onstop to fire
-      await new Promise(r => setTimeout(r, 200));
-    }
-    if (!lastBlob) return alert('No recording captured.');
+    if(!lastBlob) await new Promise(r=>setTimeout(r,200));
+    if(!lastBlob) return alert('No recording captured.');
 
     const backend = backendUrlInput.value.trim();
-    if (!backend) return alert('Please set Backend URL (Render service) first.');
+    if(!backend) return alert('Set backend URL first');
 
-    const uploadUrl = backend.replace(/\/$/, '') + '/upload';
+    const uploadUrl = backend.replace(/\/$/,'') + '/upload';
     const form = new FormData();
     form.append('file', lastBlob, lastFileName);
 
-    // indicate uploading
     stopBtn.textContent = 'Uploading...';
     stopBtn.disabled = true;
 
     try {
-      const resp = await fetch(uploadUrl, { method: 'POST', body: form });
-      if (!resp.ok) throw new Error('Upload failed: ' + resp.statusText);
+      const resp = await fetch(uploadUrl, { method:'POST', body:form });
+      if(!resp.ok) throw new Error(resp.statusText);
       const data = await resp.json();
+      console.log('✅ Upload response:', data);
+
+      // Show basic analytics immediately if any
       showAnalytics(data);
-      // --- AUTOMATIC AI SUMMARY FETCH ---
-  const contentId = data.contentId; // returned by backend
-  if (contentId) {
-    // wait 60 seconds before calling summary
-    setTimeout(async () => {
-      try {
-        const backend = backendUrlInput.value.trim();
-        const summaryResp = await fetch(backend.replace(/\/$/, '') + '/summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content_id: contentId,
-            viewer_id: 'IGH141585754362',
-            organisation_id: 'PDX436422222699'
-          })
-        });
 
-        if (!summaryResp.ok) throw new Error(summaryResp.statusText);
-        const summaryData = await summaryResp.json();
-        console.log('📝 AI Summary:', summaryData);
+      // Start polling for AI summary
+      if(data.contentId){
+        startPollingSummary(data.contentId);
+      }
 
-        // display analytics if you want
-        showAnalytics(summaryData);
-    } catch (err) {
+    } catch(err){
       alert('Upload/processing error: ' + err.message);
       console.error(err);
     } finally {
@@ -170,27 +149,72 @@
   };
 
   downloadBtn.onclick = () => {
-    if (!lastBlob) return;
+    if(!lastBlob) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(lastBlob);
     a.download = lastFileName || 'recording.webm';
     a.click();
   };
 
-  function showAnalytics(json) {
-    document.getElementById('analytics').style.display = 'flex';
+  // ----------------------------
+  // Polling function for AI summary
+  // ----------------------------
+  function startPollingSummary(contentId){
+    const backend = backendUrlInput.value.trim();
+    if(!backend) return;
+
+    if(pollInterval) clearInterval(pollInterval);
+
+    pollInterval = setInterval(async ()=>{
+      try{
+        const resp = await fetch(backend.replace(/\/$/,'') + '/summary', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({
+            content_id: contentId,
+            viewer_id: 'IGH141585754362',
+            organisation_id: 'PDX436422222699'
+          })
+        });
+        if(!resp.ok) throw new Error(resp.statusText);
+
+        const summaryData = await resp.json();
+        console.log('📝 AI Summary fetched:', summaryData);
+
+        // Show summary live
+        showAnalytics(summaryData);
+
+        // Stop polling if summary is ready (you can define your own condition)
+        if(summaryData && summaryData.status === 'ready'){ 
+          clearInterval(pollInterval); 
+          pollInterval = null;
+          console.log('✅ AI summary ready, stopped polling');
+        }
+
+      }catch(err){
+        console.error('⚠ Error polling AI summary:', err);
+      }
+    }, 15000); // every 15s
+  }
+
+  // ----------------------------
+  // Display analytics on frontend
+  // ----------------------------
+  function showAnalytics(json){
+    const analyticsDiv = document.getElementById('analytics');
+    analyticsDiv.style.display = 'flex';
     document.getElementById('a-fname').textContent = json.filename || '';
-    document.getElementById('a-duration').textContent = (json.format && json.format.duration) ? (Number(json.format.duration).toFixed(2) + 's') : 'n/a';
-    document.getElementById('a-res').textContent = (json.streams && json.streams[0]) ? `${json.streams[0].width}x${json.streams[0].height}` : 'n/a';
-    document.getElementById('a-fps').textContent = (json.streams && json.streams[0] && json.streams[0].r_frame_rate) ? json.streams[0].r_frame_rate : 'n/a';
+    document.getElementById('a-duration').textContent = json.format?.duration ? Number(json.format.duration).toFixed(2)+'s' : 'n/a';
+    document.getElementById('a-res').textContent = json.streams?.[0] ? `${json.streams[0].width}x${json.streams[0].height}` : 'n/a';
+    document.getElementById('a-fps').textContent = json.streams?.[0]?.r_frame_rate || 'n/a';
     document.getElementById('a-size').textContent = json.size || 'n/a';
 
     const thumbsDiv = document.getElementById('thumbs');
     thumbsDiv.innerHTML = '';
-    if (json.thumbnails && json.thumbnails.length) {
-      json.thumbnails.forEach(t => {
+    if(json.thumbnails && json.thumbnails.length){
+      json.thumbnails.forEach(t=>{
         const img = document.createElement('img');
-        img.src = backendUrlInput.value.replace(/\/$/, '') + '/' + t.replace(/^\//, '');
+        img.src = backendUrlInput.value.replace(/\/$/,'') + '/' + t.replace(/^\//,'');
         img.className = 'thumb';
         thumbsDiv.appendChild(img);
       });
@@ -199,5 +223,6 @@
 
 })();
 </script>
+
 </body>
 </html>
