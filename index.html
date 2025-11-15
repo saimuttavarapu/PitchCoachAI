@@ -126,7 +126,7 @@
 
     const uploadUrl = backend.replace(/\/$/, '') + '/upload';
     const form = new FormData();
-    form.append('video', lastBlob, lastFileName);
+    form.append('file', lastBlob, lastFileName);
 
     // indicate uploading
     stopBtn.textContent = 'Uploading...';
